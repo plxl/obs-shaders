@@ -6,12 +6,16 @@ These are some shaders I've made for OBS using the [obs-shaderfilter](https://gi
 
 The superellipse shader is similar to the built-in rounded_rect shader in that it visually appears to round the corners of a source (when exponent is set to around 4+).
 
+![obs_roundrect_vs_superellipse](https://github.com/user-attachments/assets/b2f79a46-f025-4f9d-9d3b-49edf963b390)
+
 I vastly prefer the more natural roundness you get from using superellipse as opposed to a standard flat rounded rectangle. It is more computationally expensive, however.
 
 ### Edge Fade
 `edge_fade.shader`
 
 The edge fade shader is very simple; it fades the alpha in from the edges of your choosing with the strength of your choosing.
+
+![obs_edgefade](https://github.com/user-attachments/assets/467e475d-e825-4d21-bea9-34dc4e237b65)
 
 ## Usage Guide
 There are two methods to using these shaders in OBS, both will require you to install the aforementioned [obs-shaderfilter](https://github.com/exeldro/obs-shaderfilter/) plugin, first.
