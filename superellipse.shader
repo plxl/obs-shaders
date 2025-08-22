@@ -2,31 +2,45 @@
 // plxl: https://github.com/plxl
 // what is a superellipse? https://en.wikipedia.org/wiki/Superellipse
 
-uniform float squircle_exponent<
-    string label = "Squircle exponent (n)";
+uniform float exponent<
+    string label = "Exponent (n)";
     string widget_type = "slider";
     float minimum = 1.0;
     float maximum = 24.0;
     float step = 0.1;
-> = 4.0;
+> = 5.0;
 
-uniform int border_thickness<
-    string label = "Border thickness (px)";
-    string widget_type = "slider";
-    int minimum = 0;
-    int maximum = 100;
-    int step = 1;
-> = 0;
-
-uniform int edge_smoothing<
+uniform float edge_smoothing<
     string label = "Edge smoothing (px)";
     string widget_type = "slider";
-    int minimum = 0;
-    int maximum = 200;
-    int step = 1;
-> = 0;
+    float minimum = 0.0;
+    float maximum = 100.0;
+    float step = 0.5;
+> = 5.0;
 
-uniform float4 border_color;
+
+// helper functions
+
+float superellipse_sd(float2 p, float2 center, float half, float n, float eps) {
+    float2 ca = abs(p - center);
+    float u = ca.x / half;
+    float v = ca.y / half;
+    float F = pow(u, n) + pow(v, n) - 1.0;
+    float gu = (n * ((n>1.0) ? pow(max(u, eps), n - 1.0) : 1.0)) / half;
+    float gv = (n * ((n>1.0) ? pow(max(v, eps), n - 1.0) : 1.0)) / half;
+    float grad = sqrt(gu * gu + gv * gv);
+    grad = max(grad, eps);
+    return F / grad;
+}
+
+float box_sdf(float2 p, float2 center, float2 half) {
+    float2 d = abs(p - center) - half;
+    float2 maxd = max(d, 0.0);
+    float sd_out = length(maxd);
+    float sd_in = min(max(d.x, d.y), 0.0);
+    return sd_out + sd_in;
+}
+
 
 float4 mainImage(VertData v_in) : TARGET
 {
@@ -40,9 +54,8 @@ float4 mainImage(VertData v_in) : TARGET
     float a = max(1.0, texSize.x * 0.5);
     float b = max(1.0, texSize.y * 0.5);
 
-    float n = max(1.0, squircle_exponent);
+    float n = max(1.0, exponent);
     float es = max(0.0, float(edge_smoothing));
-    float bt = max(0.0, float(border_thickness));
     float eps = 1e-6;
 
     // distance to rectangle edges (in pixels) measured inward
@@ -52,26 +65,44 @@ float4 mainImage(VertData v_in) : TARGET
     float dist_top    = texSize.y - px.y;
     float dist_rect = min(min(dist_left, dist_right), min(dist_bottom, dist_top));
 
-    // centred absolute coords (first-quadrant equiv) in pixels
-    float2 centeredAbs = abs(px - float2(a, b));
+    // compute signed distance (px) to the union of two square superellipse caps
+    // if source is (near) square, this reduces to just one superellipse.
 
-    // normalised u,v in [0..1] from centre toward outer edges
-    float u = centeredAbs.x / a;
-    float v = centeredAbs.y / b;
+    float signed_dist_px = 0.0;
+    bool wide = texSize.x > texSize.y + 0.5;
+    bool tall = texSize.y > texSize.x + 0.5;
 
-    // F = u^n + v^n - 1  (<=0 inside)
-    float Au = pow(u, n);
-    float Av = pow(v, n);
-    float F = Au + Av - 1.0;
+    if (wide) {
+        float cap_half = b;
+        float2 cLeft  = float2(cap_half, b);
+        float2 cRight = float2(texSize.x - cap_half, b);
+        float sd_left  = superellipse_sd(px, cLeft,  cap_half, n, eps);
+        float sd_right = superellipse_sd(px, cRight, cap_half, n, eps);
 
-    // gradient magnitude of F in pixel units (safe for n>=1)
-    float gu = (n * ( (n>1.0) ? pow(max(u, eps), n - 1.0) : 1.0 )) / a;
-    float gv = (n * ( (n>1.0) ? pow(max(v, eps), n - 1.0) : 1.0 )) / b;
-    float grad_mag = sqrt(gu * gu + gv * gv);
-    if (grad_mag < eps) grad_mag = eps;
+        float2 rect_center = float2(texSize.x * 0.5, b);
+        float2 rect_half   = float2(texSize.x * 0.5 - cap_half, b);
+        float sd_rect = box_sdf(px, rect_center, rect_half);
 
-    // signed distance to superellipse boundary in pixels (positive outside)
-    float signed_dist_px = F / grad_mag;
+        // union: nearest of left cap, right cap, or centre rectangle
+        signed_dist_px = min(min(sd_left, sd_right), sd_rect);
+
+    } else if (tall) {
+        float cap_half = a;
+        float2 cBottom = float2(a, cap_half);
+        float2 cTop    = float2(a, texSize.y - cap_half);
+        float sd_bottom = superellipse_sd(px, cBottom, cap_half, n, eps);
+        float sd_top    = superellipse_sd(px, cTop,    cap_half, n, eps);
+
+        float2 rect_center = float2(a, texSize.y * 0.5);
+        float2 rect_half   = float2(a, texSize.y * 0.5 - cap_half);
+        float sd_rect = box_sdf(px, rect_center, rect_half);
+
+        signed_dist_px = min(min(sd_bottom, sd_top), sd_rect);
+
+    } else {
+        // near-square: single centred superellipse (original behaviour)
+        signed_dist_px = superellipse_sd(px, float2(a, b), a, n, eps);
+    }
 
     // inside distance to superellipse boundary (positive when inside)
     float dist_super_inside = max(0.0, -signed_dist_px);
@@ -87,9 +118,7 @@ float4 mainImage(VertData v_in) : TARGET
         alpha = smoothstep(0.0, 1.0, inside_dist / es);
     }
 
-    // border is outside the superellipse boundary within bt pixels
-    bool is_within_border = (signed_dist_px > 0.0 && signed_dist_px <= bt);
-    float4 borderMask = is_within_border ? border_color : float4(0,0,0,0);
-
-    return src * alpha + borderMask;
+    // for some reason, returning a float4 like this breaks the preview
+    // probably a bug with exeldro or OBS but the actual filter still works as expected
+    return float4(src.rgb, src.a * alpha);
 }
